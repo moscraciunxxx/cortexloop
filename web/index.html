@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CortexLoop — Physical AI on Arm</title>
+  <style>
+    :root {
+      --bg: #07090d;
+      --panel: #10151c;
+      --line: #1d2733;
+      --text: #e8eef4;
+      --muted: #8b9bb0;
+      --accent: #3ee0c5;
+      --warn: #ffb020;
+      --danger: #ff5a5a;
+      --blue: #4d8dff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 "IBM Plex Sans", "Segoe UI", sans-serif; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 22px; border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, #0b1016, #101820);
+    }
+    .brand { display: flex; gap: 12px; align-items: center; }
+    .mark {
+      width: 34px; height: 34px; border-radius: 8px;
+      background: conic-gradient(from 210deg, var(--accent), var(--blue), var(--accent));
+      display: grid; place-items: center; font-weight: 700;
+    }
+    .mark span { background: var(--bg); width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; }
+    h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
+    h1 small { display: block; color: var(--muted); font-weight: 400; letter-spacing: 0.12em; font-size: 10px; text-transform: uppercase; }
+    .pills { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { border: 1px solid var(--line); background: #0c1218; padding: 6px 10px; border-radius: 999px; color: var(--muted); }
+    .pill b { color: var(--accent); font-weight: 600; }
+    main { display: grid; grid-template-columns: 1.15fr 0.9fr 0.95fr; gap: 14px; padding: 14px; height: calc(100% - 64px); }
+    section {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      padding: 12px; display: flex; flex-direction: column; min-height: 0;
+    }
+    h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+    canvas { width: 100%; image-rendering: pixelated; background: #000; border-radius: 8px; }
+    #map { flex: 1; }
+    #cam { height: 220px; object-fit: contain; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    button, select {
+      background: #0c1218; color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; padding: 8px 10px; cursor: pointer;
+    }
+    button.active, button:hover { border-color: var(--accent); color: var(--accent); }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .metric { background: #0c1218; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+    .metric .k { color: var(--muted); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+    .metric .v { font-size: 20px; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .log { flex: 1; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
+    .log div { padding: 3px 0; border-bottom: 1px solid #16202a; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #16202a; }
+    th { color: var(--muted); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+    .ok { color: var(--accent); } .bad { color: var(--danger); }
+    @media (max-width: 1100px) { main { grid-template-columns: 1fr; height: auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="mark"><span>CL</span></div>
+      <h1>CortexLoop<small>Closed-loop Physical AI · Arm NEON / I8MM / KleidiAI</small></h1>
+    </div>
+    <div class="pills">
+      <div class="pill">CPU <b id="cpu">…</b></div>
+      <div class="pill">backend <b id="backend">…</b></div>
+      <div class="pill">loop <b id="hz">0</b> Hz</div>
+      <div class="pill">status <b id="status">boot</b></div>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>Warehouse · sense-plan-act</h2>
+      <canvas id="map"></canvas>
+      <div class="row">
+        <select id="mission">
+          <option value="collect_red">Mission: collect red boxes</option>
+          <option value="collect_blue">Mission: collect blue boxes</option>
+          <option value="collect_green">Mission: collect green boxes</option>
+        </select>
+        <button id="reset">Reset world</button>
+      </div>
+    </section>
+    <section>
+      <h2>On-robot camera · 96×64</h2>
+      <canvas id="cam" width="96" height="64"></canvas>
+      <div class="metrics" style="margin-top:10px">
+        <div class="metric"><div class="k">Perceived</div><div class="v" id="cls">—</div></div>
+        <div class="metric"><div class="k">Confidence</div><div class="v" id="conf">—</div></div>
+        <div class="metric"><div class="k">Preprocess</div><div class="v" id="pre">— µs</div></div>
+        <div class="metric"><div class="k">INT8 infer</div><div class="v" id="inf">— µs</div></div>
+      </div>
+      <div class="row" id="backends"></div>
+    </section>
+    <section>
+      <h2>Arm optimization evidence</h2>
+      <div class="metrics">
+        <div class="metric"><div class="k">Delivered</div><div class="v" id="del">0</div></div>
+        <div class="metric"><div class="k">Remaining</div><div class="v" id="rem">0</div></div>
+        <div class="metric"><div class="k">Energy</div><div class="v" id="en">0 J</div></div>
+        <div class="metric"><div class="k">Collisions</div><div class="v" id="col">0</div></div>
+      </div>
+      <div class="row"><button id="bench">Run GEMM / e2e bench</button></div>
+      <div style="overflow:auto; margin-top:8px; flex: 0 0 auto;">
+        <table id="benchtable">
+          <thead><tr><th>Backend</th><th>GEMM µs</th><th>GFLOP/s</th><th>e2e µs</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <h2 style="margin-top:12px">Mission log</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </main>
+  <script>
+    const COLORS = {
+      0: "#2a3038", 1: "#6b717a", 2: "#dc4038", 3: "#3870dc",
+      4: "#2ea85c", 5: "#f0ba20", 6: "#c48c5c", 7: "#28c4bc"
+    };
+    const map = document.getElementById("map");
+    const cam = document.getElementById("cam");
+    const mctx = map.getContext("2d");
+    const cctx = cam.getContext("2d");
+    const img = cctx.createImageData(96, 64);
+
+    function drawMap(s) {
+      const dpr = devicePixelRatio || 1;
+      const w = map.clientWidth, h = map.clientHeight;
+      if (map.width !== w * dpr) { map.width = w * dpr; map.height = h * dpr; }
+      mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      mctx.fillStyle = "#07090d";
+      mctx.fillRect(0, 0, w, h);
+      const gw = s.grid.w, gh = s.grid.h;
+      const tw = w / gw, th = h / gh;
+      for (let y = 0; y < gh; y++) {
+        for (let x = 0; x < gw; x++) {
+          mctx.fillStyle = COLORS[s.grid.tiles[y][x]] || "#111";
+          mctx.fillRect(x * tw + 0.5, y * th + 0.5, tw - 1, th - 1);
+        }
+      }
+      const r = s.robot;
+      mctx.save();
+      mctx.translate(r.x * tw, r.y * th);
+      mctx.rotate(r.theta);
+      mctx.fillStyle = "#3ee0c5";
+      mctx.beginPath();
+      mctx.moveTo(10, 0); mctx.lineTo(-7, 6); mctx.lineTo(-7, -6);
+      mctx.closePath(); mctx.fill();
+      mctx.restore();
+    }
+
+    function drawCam(rgb) {
+      if (!rgb || rgb.length < 96 * 64 * 3) return;
+      const d = img.data;
+      for (let i = 0, j = 0; i < rgb.length; i += 3, j += 4) {
+        d[j] = rgb[i]; d[j+1] = rgb[i+1]; d[j+2] = rgb[i+2]; d[j+3] = 255;
+      }
+      cctx.putImageData(img, 0, 0);
+    }
+
+    function setText(id, v) { document.getElementById(id).textContent = v; }
+
+    async function tick() {
+      const s = await (await fetch("/api/state")).json();
+      setText("cpu", s.cpu.replaceAll("=1", "●").replaceAll("=0", "○"));
+      setText("backend", s.backend);
+      setText("hz", s.hz);
+      setText("status", s.status);
+      setText("cls", (s.perception.class_name || "—") + (s.perception.source === "cnn" ? "" : " *"));
+      setText("conf", s.perception.confidence != null ? Number(s.perception.confidence).toFixed(2) : "—");
+      setText("pre", s.perception.preprocess_us != null ? Number(s.perception.preprocess_us).toFixed(0) + " µs" : "—");
+      setText("inf", s.perception.infer_us != null ? Number(s.perception.infer_us).toFixed(0) + " µs" : "—");
+      setText("del", s.robot.delivered);
+      setText("rem", s.remaining);
+      setText("en", s.robot.energy_j.toFixed(1) + " J");
+      setText("col", s.robot.collisions);
+      document.getElementById("log").innerHTML = (s.log || []).map(x => `<div>${x}</div>`).join("");
+      const box = document.getElementById("backends");
+      if (!box.dataset.ready) {
+        box.innerHTML = s.backends.map(b => `<button data-b="${b}">${b}</button>`).join("");
+        box.dataset.ready = "1";
+        box.onclick = async (e) => {
+          if (!e.target.dataset.b) return;
+          await fetch("/api/backend", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({backend: e.target.dataset.b})});
+        };
+      }
+      [...box.querySelectorAll("button")].forEach(btn => btn.classList.toggle("active", btn.dataset.b === s.backend));
+      drawMap(s);
+      drawCam(s.camera.rgb);
+    }
+
+    document.getElementById("reset").onclick = async () => {
+      await fetch("/api/reset", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({mission: document.getElementById("mission").value, seed: Date.now() % 10000})});
+    };
+    document.getElementById("mission").onchange = async (e) => {
+      await fetch("/api/mission", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({mission: e.target.value})});
+    };
+    document.getElementById("bench").onclick = async () => {
+      document.getElementById("bench").textContent = "Running…";
+      const j = await (await fetch("/api/bench")).json();
+      const tb = document.querySelector("#benchtable tbody");
+      tb.innerHTML = j.rows.map(r => `<tr><td>${r.name}</td><td>${r.gemm_us.toFixed(0)}</td><td>${r.gemm_gflops.toFixed(1)}</td><td>${r.e2e_us.toFixed(0)}</td></tr>`).join("");
+      document.getElementById("bench").textContent = "Run GEMM / e2e bench";
+    };
+    setInterval(tick, 80);
+    tick();
+  </script>
+</body>
+</html>

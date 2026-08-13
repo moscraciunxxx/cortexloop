@@ -1,0 +1,18 @@
+[project]
+name = "cortexloop"
+version = "1.0.0"
+description = "Closed-loop Physical AI on Arm — NEON, I8MM, and KleidiAI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26"]
+
+[project.scripts]
+cortexloop = "cortexloop.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cortexloop*"]

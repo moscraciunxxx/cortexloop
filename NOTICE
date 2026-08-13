@@ -1,0 +1,3 @@
+CortexLoop includes optional Arm KleidiAI (Apache-2.0) when built with
+-DCORTEXLOOP_WITH_KLEIDIAI=ON. KleidiAI remains copyright Arm Limited.
+See https://github.com/ARM-software/kleidiai
